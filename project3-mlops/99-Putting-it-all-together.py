@@ -65,7 +65,7 @@ display(airbnbDF)
 
 # COMMAND ----------
 
-# TODO
+airbnbDF.price = airbnbDF.price.replace('[\$,]', '', regex=True).astype(float)
 
 # COMMAND ----------
 
@@ -76,7 +76,11 @@ display(airbnbDF)
 
 # COMMAND ----------
 
-# TODO
+df = airbnbDF[['host_is_superhost', 'instant_bookable', 'host_total_listings_count', 'accommodates', 'bathrooms', 'bedrooms', 'beds', 'minimum_nights', 'number_of_reviews', 'price']]
+
+# COMMAND ----------
+
+airbnbDF.info()
 
 # COMMAND ----------
 
@@ -86,7 +90,16 @@ display(airbnbDF)
 
 # COMMAND ----------
 
-# TODO
+df.dropna(inplace=True)
+
+# COMMAND ----------
+
+df.host_is_superhost = df.host_is_superhost.apply(lambda x: 1 if x=='t' else 0)
+df.instant_bookable = df.instant_bookable.apply(lambda x: 1 if x=='t' else 0)
+
+# COMMAND ----------
+
+df.info()
 
 # COMMAND ----------
 
@@ -99,7 +112,9 @@ display(airbnbDF)
 
 # TODO
 from sklearn.model_selection import train_test_split
-
+X = df.iloc[:,:-1]
+y = df.iloc[:,-1]
+X_train, X_test, y_train, y_test = train_test_split(X, y, random_state=42)
 
 # COMMAND ----------
 
@@ -118,7 +133,10 @@ from sklearn.model_selection import train_test_split
 
 # COMMAND ----------
 
-# TODO
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+rf = RandomForestRegressor(n_estimators=100, max_depth=5)
+rf.fit(X_train, y_train)
 
 # COMMAND ----------
 
@@ -127,7 +145,9 @@ from sklearn.model_selection import train_test_split
 
 # COMMAND ----------
 
-# TODO
+rf_mse = mean_squared_error(y_test, rf.predict(X_test))
+ 
+rf_mse
 
 # COMMAND ----------
 
@@ -139,13 +159,56 @@ from sklearn.model_selection import train_test_split
 
 # TODO
 import mlflow.sklearn
-
+with mlflow.start_run(run_name="RF Model") as run:
+  mlflow.sklearn.log_model(rf, "model")
+  mlflow.log_metric("mse", rf_mse)
+ 
+  sklearnRunID = run.info.run_uuid
+  sklearnURI = run.info.artifact_uri
+  
+  experimentID = run.info.experiment_id
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC 
 # MAGIC Change and re-run the above 3 code cells to log different models and/or models with different hyperparameters until you are satisfied with the performance of at least 1 of them.
+
+# COMMAND ----------
+
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+rf = RandomForestRegressor(n_estimators=10, max_depth=1)
+rf.fit(X_train, y_train)
+rf_mse = mean_squared_error(y_test, rf.predict(X_test))
+rf_mse
+import mlflow.sklearn
+with mlflow.start_run(run_name="RF Model") as run:
+  mlflow.sklearn.log_model(rf, "model")
+  mlflow.log_metric("mse", rf_mse)
+ 
+  sklearnRunID = run.info.run_uuid
+  sklearnURI = run.info.artifact_uri
+  
+  experimentID = run.info.experiment_id
+
+# COMMAND ----------
+
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+rf = RandomForestRegressor(n_estimators=500, max_depth=10)
+rf.fit(X_train, y_train)
+rf_mse = mean_squared_error(y_test, rf.predict(X_test))
+rf_mse
+import mlflow.sklearn
+with mlflow.start_run(run_name="RF Model") as run:
+  mlflow.sklearn.log_model(rf, "model")
+  mlflow.log_metric("mse", rf_mse)
+ 
+  sklearnRunID = run.info.run_uuid
+  sklearnURI = run.info.artifact_uri
+  
+  experimentID = run.info.experiment_id
 
 # COMMAND ----------
 
@@ -157,6 +220,8 @@ import mlflow.sklearn
 
 # TODO
 import mlflow.pyfunc
+rf_pyfunc_model = mlflow.pyfunc.load_model(model_uri="runs:/"+sklearnRunID+"/model")
+type(rf_pyfunc_model)
 
 # COMMAND ----------
 
@@ -182,7 +247,10 @@ class Airbnb_Model(mlflow.pyfunc.PythonModel):
         self.model = model
     
     def predict(self, context, model_input):
-        # FILL_IN
+        y = self.model.predict(model_input)
+        y = y/model_input.accommodates
+        y = y/model_input.minimum_nights
+        return y
 
 
 # COMMAND ----------
@@ -193,8 +261,11 @@ class Airbnb_Model(mlflow.pyfunc.PythonModel):
 # COMMAND ----------
 
 # TODO
-final_model_path =  f"{working_path}/final-model"
-
+final_model_path =  f"{working_path}/final-model/test1"
+airbnb = Airbnb_Model(rf_pyfunc_model)
+dbutils.fs.rm(final_model_path, True) # Allows you to rerun the code multiple times
+ 
+mlflow.pyfunc.save_model(path=final_model_path.replace("dbfs:", "/dbfs"), python_model=airbnb)
 # FILL_IN
 
 # COMMAND ----------
@@ -204,7 +275,8 @@ final_model_path =  f"{working_path}/final-model"
 
 # COMMAND ----------
 
-# TODO
+loaded_model = mlflow.pyfunc.load_model(final_model_path)
+loaded_model.predict(X_test)
 
 # COMMAND ----------
 
@@ -223,10 +295,10 @@ final_model_path =  f"{working_path}/final-model"
 # COMMAND ----------
 
 # TODO
-save the testing data 
+#save the testing data 
 test_data_path = f"{working_path}/test_data.csv"
 # FILL_IN
-
+X_test.to_csv(test_data_path,index=False)
 prediction_path = f"{working_path}/predictions.csv"
 
 # COMMAND ----------
@@ -248,7 +320,10 @@ import pandas as pd
 @click.option("--test_data_path", default="", type=str)
 @click.option("--prediction_path", default="", type=str)
 def model_predict(final_model_path, test_data_path, prediction_path):
-    # FILL_IN
+    loaded_model = mlflow.pyfunc.load_model(final_model_path)
+    X_test = pd.read_csv(test_data_path)
+    y = loaded_model.predict(X_test)
+    y.to_csv(prediction_path, index=False)
 
 
 # test model_predict function    
@@ -281,8 +356,10 @@ conda_env: conda.yaml
 entry_points:
   main:
     parameters:
-      #FILL_IN
-    command:  "python predict.py #FILL_IN"
+      final_model_path: {type: str, default: ''}
+      test_data_path: {type: str, default: ''}
+      prediction_path: {type: str, default: ''}
+    command:  "python predict.py --final_model_path {final_model_path} --test_data_path {test_data_path} --prediction_path {prediction_path}"
 '''.strip(), overwrite=True)
 
 # COMMAND ----------
@@ -336,7 +413,17 @@ import click
 import mlflow.pyfunc
 import pandas as pd
 
-# put model_predict function with decorators here
+@click.command()
+@click.option("--final_model_path", default="", type=str)
+@click.option("--test_data_path", default="", type=str)
+@click.option("--prediction_path", default="", type=str)
+def model_predict(final_model_path, test_data_path, prediction_path):
+
+  with mlflow.start_run() as run:
+    loaded_model = mlflow.pyfunc.load_model(final_model_path)
+    X_test = pd.read_csv(test_data_path)
+    y = loaded_model.predict(X_test)
+    y.to_csv(prediction_path, index=False)
     
 if __name__ == "__main__":
   model_predict()
@@ -367,8 +454,11 @@ display( dbutils.fs.ls(workingDir) )
 # TODO
 second_prediction_path = f"{working_path}/predictions-2.csv"
 mlflow.projects.run(working_path,
-   # FILL_IN
-)
+   parameters={
+    "final_model_path": final_model_path,
+    "test_data_path": test_data_path,
+    "prediction_path": second_prediction_path,
+})
 
 # COMMAND ----------
 
